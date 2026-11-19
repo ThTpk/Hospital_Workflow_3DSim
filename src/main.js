@@ -313,7 +313,9 @@ function loop(now) {
   fpsN++;
   fpsT += dtReal;
   if (fpsT >= 1) {
-    hud.setFps(Math.round(fpsN / fpsT));
+    const fps = Math.round(fpsN / fpsT);
+    hud.setFps(fps);
+    stage.adapt(fps); // เฟรมตกติดกัน 3 วินาที -> ลดความละเอียดการวาดลงเอง
     fpsN = 0;
     fpsT = 0;
   }

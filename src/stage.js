@@ -35,8 +35,11 @@ export function tierFromGPU(renderer, fallback) {
   } catch (e) { /* บางเบราว์เซอร์ปิดข้อมูลนี้เพื่อความเป็นส่วนตัว */ }
   if (!name) return fallback;
   if (/SwiftShader|llvmpipe|Software|Microsoft Basic/i.test(name)) return 'low';
-  // กราฟิกออนบอร์ด: fill rate ต่ำ ต้องลด pixel ratio และเงา
-  if (/Intel|UHD Graphics|HD Graphics|Iris|Vega \d|Radeon Graphics/i.test(name)) return 'low';
+  // กราฟิกออนบอร์ดรุ่นเก่า: fill rate ต่ำจริง
+  if (/HD Graphics [0-9]{3,4}|UHD Graphics 6|Intel\(R\) HD/i.test(name)) return 'low';
+  // ออนบอร์ดรุ่นใหม่ (Iris Xe, Radeon Graphics): ไหวระดับกลาง
+  // ถ้าไม่ไหวจริง adapt() ด้านล่างจะลดให้เองจากค่า fps ที่วัดได้ ดีกว่าเดาตั้งแต่แรก
+  if (/Intel|Iris|Vega \d|Radeon Graphics/i.test(name)) return 'mid';
   if (/Apple M\d/i.test(name)) return 'high';
   if (/RTX|GTX|Radeon RX|Arc A/i.test(name)) return 'high';
   return fallback;
@@ -266,7 +269,37 @@ export class Stage {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.tier.pixelRatio));
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / Math.max(h, 1);
+    // จอแนวตั้ง (มือถือ) ต้องถ่างมุมมองแนวตั้งออก เพื่อให้ "มุมมองแนวนอน" เท่าเดิม
+    // ไม่งั้นอาคารจะถูกตัดข้างจนเห็นแค่มุมเดียว
+    const BASE_FOV = 42;
+    if (this.camera.aspect < 1) {
+      const halfH = Math.tan((BASE_FOV * Math.PI) / 360) / this.camera.aspect;
+      this.camera.fov = Math.min((2 * Math.atan(halfH) * 180) / Math.PI, 78);
+    } else {
+      this.camera.fov = BASE_FOV;
+    }
     this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * ลดความละเอียดการวาดลงเองถ้าเฟรมตก
+   *
+   * การเดาจากชื่อ GPU ผิดได้ทั้งสองทาง: เดาสูงไปหน้าจะกระตุก เดาต่ำไปก็เสียคุณภาพฟรี ๆ
+   * วัดแล้วค่อยปรับแม่นกว่า ลดอย่างเดียวไม่เพิ่มกลับ เพื่อไม่ให้แกว่งไปมา
+   */
+  adapt(fps) {
+    if (!fps || this._adaptLock) return;
+    this._lowFrames = fps < 35 ? (this._lowFrames || 0) + 1 : 0;
+    if (this._lowFrames < 3) return;
+    const cur = this.renderer.getPixelRatio();
+    const next = Math.max(cur - 0.25, 0.75);
+    if (next < cur) {
+      this.renderer.setPixelRatio(next);
+      this.tier = { ...this.tier, hudEvery: Math.min(this.tier.hudEvery + 1, 4) };
+      this._lowFrames = 0;
+    } else {
+      this._adaptLock = true; // ลดจนสุดแล้ว เลิกพยายาม
+    }
   }
 
   /**
