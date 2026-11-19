@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>จำลองการทำงานในโรงพยาบาล 3 มิติ</title>
+<meta name="description" content="แบบจำลอง 3 มิติแบบโต้ตอบของการไหลของผู้ป่วยในโรงพยาบาล พร้อมโมเดลคิวที่ปรับกำลังคนและสถานการณ์ได้">
+<meta name="color-scheme" content="light dark">
+<style>
+:root{
+  --bg:#eef1f5; --panel:rgba(255,255,255,.82); --panel-solid:#fff;
+  --ink:#232c38; --ink-2:#5b6676; --ink-3:#8b96a6;
+  --line:rgba(35,44,56,.12); --line-2:rgba(35,44,56,.22);
+  --accent:#e8563f; --ok:#3f9e67; --warn:#e0a53f; --info:#4a7fb5; --purple:#8e7cc3;
+  --r:12px; --sh:0 2px 14px rgba(28,38,51,.10), 0 0 0 1px rgba(35,44,56,.06);
+  --mono:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --sans:"Noto Sans Thai","Leelawadee UI","IBM Plex Sans Thai",Tahoma,system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#1a1f27; --panel:rgba(32,39,49,.86); --panel-solid:#222933;
+    --ink:#e7ecf3; --ink-2:#a3aebd; --ink-3:#73808f;
+    --line:rgba(231,236,243,.14); --line-2:rgba(231,236,243,.24);
+    --sh:0 2px 16px rgba(0,0,0,.34), 0 0 0 1px rgba(231,236,243,.08);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1a1f27; --panel:rgba(32,39,49,.86); --panel-solid:#222933;
+  --ink:#e7ecf3; --ink-2:#a3aebd; --ink-3:#73808f;
+  --line:rgba(231,236,243,.14); --line-2:rgba(231,236,243,.24);
+  --sh:0 2px 16px rgba(0,0,0,.34), 0 0 0 1px rgba(231,236,243,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--ink); font-family:var(--sans);
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+  font-size:14px; line-height:1.45;
+}
+#view{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+#view:active{cursor:grabbing}
+
+/* ───────── โครงวาง ───────── */
+.ui{position:fixed;inset:0;pointer-events:none;padding:14px;display:grid;
+  grid-template-columns:minmax(210px,232px) 1fr minmax(210px,248px);
+  grid-template-rows:auto 1fr auto;
+  grid-template-areas:"tl top tr" "ml . mr" "bl bot br";
+  gap:12px;}
+.ui > *{pointer-events:auto}
+.p{background:var(--panel);backdrop-filter:blur(14px) saturate(1.1);-webkit-backdrop-filter:blur(14px) saturate(1.1);
+  border-radius:var(--r);box-shadow:var(--sh);padding:11px 12px}
+.p h3{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+
+#clock{grid-area:tl;align-self:start}
+#depts{grid-area:ml;align-self:start;max-height:calc(100vh - 230px);overflow-y:auto;scrollbar-width:thin}
+#charts{grid-area:tr;align-self:start}
+#tune{grid-area:mr;align-self:start;max-height:calc(100vh - 250px);overflow-y:auto;scrollbar-width:thin}
+#ctrl{grid-area:bl;align-self:end;grid-column:tl-start/span 1}
+#timebar{grid-area:bot;align-self:end;justify-self:center;width:min(560px,100%)}
+#card{grid-area:br;align-self:end}
+#title{grid-area:top;justify-self:center;align-self:start;text-align:center;pointer-events:none}
+
+/* ───────── นาฬิกา + สถิติรวม ───────── */
+.clockrow{display:flex;align-items:baseline;gap:9px;margin-bottom:9px}
+.time{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1}
+.scen{font-size:11px;color:var(--ink-2);padding:2px 7px;border:1px solid var(--line-2);border-radius:99px;white-space:nowrap}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:1px 10px}
+.kpi{display:flex;justify-content:space-between;align-items:baseline;gap:6px;font-size:11.5px;padding:2px 0}
+.kpi span:first-child{color:var(--ink-2)}
+.kpi b{font-family:var(--mono);font-weight:600;font-size:12.5px}
+
+/* ───────── รายการแผนก (ใช้เป็นปุ่มเลือกด้วย) ───────── */
+.dept{width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:6px 7px;cursor:pointer;
+  font-family:inherit;color:inherit;display:block;transition:background .14s}
+.dept:hover{background:rgba(74,127,181,.12)}
+.dept[aria-pressed="true"]{background:rgba(74,127,181,.2);box-shadow:inset 0 0 0 1px rgba(74,127,181,.4)}
+.dept.bot{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.dr1{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.dn{font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dq{font-family:var(--mono);font-size:12px;font-weight:600;flex-shrink:0}
+.bar{height:3px;border-radius:2px;background:var(--line);margin-top:4px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:2px;background:var(--info);transition:width .3s,background .3s}
+.dr2{display:flex;justify-content:space-between;font-size:10px;color:var(--ink-3);margin-top:3px;font-family:var(--mono)}
+
+/* ───────── ปุ่มกลุ่ม ───────── */
+.grp{margin-bottom:9px}
+.grp:last-child{margin-bottom:0}
+.glab{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px;font-weight:600}
+.btns{display:flex;flex-wrap:wrap;gap:4px}
+button.b{font-family:inherit;font-size:11.5px;padding:4px 9px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--line-2);background:transparent;color:var(--ink-2);transition:.14s;white-space:nowrap}
+button.b:hover{border-color:var(--info);color:var(--ink)}
+button.b[aria-pressed="true"]{background:var(--info);border-color:var(--info);color:#fff;font-weight:500}
+button.b.danger[aria-pressed="true"]{background:var(--accent);border-color:var(--accent)}
+
+/* ───────── สไลเดอร์ปรับกำลังคน ───────── */
+.sl{margin-bottom:7px}
+.sl:last-child{margin-bottom:0}
+.slr{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:1px}
+.slr b{font-family:var(--mono);font-weight:600}
+input[type=range]{width:100%;height:16px;-webkit-appearance:none;appearance:none;background:none;cursor:pointer;display:block}
+input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:var(--line-2)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+  background:var(--info);margin-top:-4.5px;border:2px solid var(--panel-solid);box-shadow:0 1px 3px rgba(0,0,0,.25)}
+input[type=range]::-moz-range-track{height:3px;border-radius:2px;background:var(--line-2)}
+input[type=range]::-moz-range-thumb{width:12px;height:12px;border:2px solid var(--panel-solid);border-radius:50%;background:var(--info)}
+.hint{font-size:10px;color:var(--ink-3);margin-top:5px;line-height:1.35}
+
+/* ───────── กราฟ ───────── */
+canvas.ch{width:100%;display:block;border-radius:6px}
+.chl{font-size:10px;color:var(--ink-3);display:flex;justify-content:space-between;margin-top:2px;font-family:var(--mono)}
+
+/* ───────── แถบเวลา ───────── */
+#timebar{display:flex;align-items:center;gap:10px}
+#timebar input[type=range]{flex:1}
+.tspan{font-family:var(--mono);font-size:10.5px;color:var(--ink-3)}
+
+/* ───────── การ์ดผู้ป่วย ───────── */
+#card{display:none;width:min(260px,100%)}
+#card.on{display:block}
+.pstep{display:flex;justify-content:space-between;gap:8px;font-size:11px;padding:2.5px 0;border-bottom:1px solid var(--line)}
+.pstep:last-child{border:0}
+.pstep span:last-child{font-family:var(--mono);color:var(--ink-2);flex-shrink:0}
+
+/* ───────── หัวเรื่อง + callout ───────── */
+#title h1{font-size:14px;font-weight:600;letter-spacing:-.01em}
+#title p{font-size:11px;color:var(--ink-2)}
+#bot{margin-top:7px;display:none;font-size:11.5px;background:var(--accent);color:#fff;
+  padding:4px 11px;border-radius:99px;box-shadow:var(--sh);font-weight:500}
+#bot.on{display:inline-block}
+
+/* ───────── ทัวร์อัตโนมัติ ───────── */
+#tour{position:fixed;left:50%;bottom:86px;transform:translateX(-50%);display:none;align-items:center;gap:7px;
+  background:var(--panel);backdrop-filter:blur(12px);padding:5px 13px;border-radius:99px;box-shadow:var(--sh);
+  font-size:11.5px;color:var(--ink-2)}
+#tour.on{display:flex}
+#tour i{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1.6s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ───────── โหลด ───────── */
+#load{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:50;transition:opacity .4s}
+#load.off{opacity:0;pointer-events:none}
+#load div{text-align:center}
+#load b{font-size:13px;font-weight:600;display:block;margin-bottom:3px}
+#load small{font-size:11px;color:var(--ink-2)}
+
+/* ───────── จอเล็ก ───────── */
+@media (max-width:1100px){
+  #charts,#tune{display:none}
+  .ui{grid-template-columns:minmax(190px,214px) 1fr;grid-template-areas:"tl top" "ml ." "bl bot";}
+}
+@media (max-width:720px){
+  .ui{display:block;padding:10px;overflow-y:auto;overflow-x:hidden;
+    -webkit-overflow-scrolling:touch;background:linear-gradient(to bottom,transparent 48vh,var(--bg) 62vh)}
+  .ui > *{margin-bottom:9px;width:100%}
+  #clock,#depts,#ctrl,#timebar,#card{position:static;max-height:none;width:100%}
+  #depts{margin-top:40vh}
+  #title{position:static;text-align:left;margin-bottom:9px}
+  #tour{bottom:12px}
+  .kpis{grid-template-columns:1fr 1fr}
+}
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div class="ui">
+
+  <div id="title">
+    <h1>การไหลของผู้ป่วยในโรงพยาบาล</h1>
+    <p>โรงพยาบาลทั่วไป 120 เตียง · ผู้ป่วยนอก ~480 คน/วัน</p>
+    <div id="bot"></div>
+  </div>
+
+  <div class="p" id="clock">
+    <div class="clockrow">
+      <div class="time" id="t">06:00</div>
+      <div class="scen" id="scenName">วันปกติ</div>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><span>มาแล้ว</span><b id="kArr">0</b></div>
+      <div class="kpi"><span>กลับแล้ว</span><b id="kLeft">0</b></div>
+      <div class="kpi"><span>อยู่ใน รพ.</span><b id="kIn">0</b></div>
+      <div class="kpi"><span>รับไว้นอน</span><b id="kAdm">0</b></div>
+      <div class="kpi"><span>เวลาอยู่เฉลี่ย</span><b id="kLos">—</b></div>
+      <div class="kpi"><span>รอนานสุด</span><b id="kMax">—</b></div>
+    </div>
+  </div>
+
+  <div class="p" id="depts">
+    <h3>แผนก <span id="fps" style="font-family:var(--mono);font-weight:400"></span></h3>
+    <div id="dlist"></div>
+    <div class="hint">กดแผนกเพื่อโฟกัส · กดซ้ำเพื่อยกเลิก</div>
+  </div>
+
+  <div class="p" id="charts">
+    <h3>คิวย้อนหลัง <span id="chSel">OPD ตรวจโรค</span></h3>
+    <canvas class="ch" id="chQ" height="92"></canvas>
+    <div class="chl"><span>06:00</span><span id="chMax">0</span><span>18:00</span></div>
+    <h3 style="margin-top:11px">การใช้กำลังคน</h3>
+    <canvas class="ch" id="chU" height="112"></canvas>
+  </div>
+
+  <div class="p" id="tune">
+    <h3>ปรับสถานการณ์</h3>
+    <div id="slist"></div>
+    <div class="hint">เลื่อนแล้วเห็นผลทันที — ลองลดแพทย์ OPD เหลือ 6 คน แล้วดูว่าคอขวดย้ายไปไหน</div>
+  </div>
+
+  <div class="p" id="ctrl">
+    <div class="grp">
+      <div class="glab">สถานการณ์</div>
+      <div class="btns" id="bScen"></div>
+    </div>
+    <div class="grp">
+      <div class="glab">ตัดผ่าอาคาร</div>
+      <div class="btns" id="bCut"></div>
+    </div>
+    <div class="grp">
+      <div class="glab">ชั้น</div>
+      <div class="btns" id="bFloor"></div>
+    </div>
+    <div class="grp">
+      <div class="glab">มุมกล้อง</div>
+      <div class="btns" id="bCam"></div>
+    </div>
+  </div>
+
+  <div class="p" id="timebar">
+    <button class="b" id="play" aria-pressed="true" style="min-width:58px">หยุด</button>
+    <div class="btns" id="bSpeed"></div>
+    <span class="tspan">06:00</span>
+    <input type="range" id="scrub" min="360" max="1080" step="1" value="360" aria-label="เวลา">
+    <span class="tspan">18:00</span>
+  </div>
+
+  <div class="p" id="card">
+    <h3>ผู้ป่วย <span id="pid"></span> <button class="b" id="pClose" style="padding:1px 7px">ปิด</button></h3>
+    <div id="psteps"></div>
+    <div class="hint" id="pnote"></div>
+  </div>
+
+</div>
+
+<div id="tour"><i></i><span>กำลังพาชมอัตโนมัติ — แตะเพื่อควบคุมเอง</span></div>
+
+<div id="load"><div><b>กำลังเตรียมแบบจำลอง</b><small>สร้างอาคารและโมเดลคิว…</small></div></div>
+
+<script type="importmap">
+{"imports":{"three":"./vendor/three.module.js"}}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
