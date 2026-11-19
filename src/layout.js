@@ -31,53 +31,53 @@ export const FLOOR_Y = [0, BUILDING.floorH];
 export const ROOMS = {
   reg: {
     floor: 0, pos: [-24, 10], size: [15, 13],
-    counter: [[-30, 13], [-18, 13]], qDir: [0, -1], access: 's1',
+    counter: [[-30, 10], [-18, 10]], qDir: [0, -1], access: 's1',
     color: 0x7fa8d4,
   },
   triage: {
     floor: 0, pos: [-8, 10], size: [12, 13],
-    counter: [[-13, 13], [-3, 13]], qDir: [0, -1], access: 's3',
+    counter: [[-13, 10], [-3, 10]], qDir: [0, -1], access: 's3',
     color: 0x86c3b4,
   },
   pharm: {
     floor: 0, pos: [9, 10], size: [15, 13],
-    counter: [[3, 13], [15, 13]], qDir: [0, -1], access: 's5',
+    counter: [[3, 10], [15, 10]], qDir: [0, -1], access: 's5',
     color: 0xc9a86a,
   },
   cashier: {
     floor: 0, pos: [25, 11], size: [13, 11],
-    counter: [[20, 13.5], [30, 13.5]], qDir: [0, -1], access: 's6',
+    counter: [[20, 11], [30, 11]], qDir: [0, -1], access: 's6',
     color: 0xb59bc4,
   },
   opd: {
     floor: 0, pos: [-20, -11], size: [23, 15],
-    counter: [[-30, -14.5], [-10, -14.5]], qDir: [0, 1], access: 's2', cubicle: true,
+    counter: [[-30, -11], [-10, -11]], qDir: [0, 1], access: 's2', cubicle: true,
     color: 0x6f97c7, rooms: 8,
   },
   lab: {
     floor: 0, pos: [-1, -11], size: [13, 15],
-    counter: [[-6, -14], [4, -14]], qDir: [0, 1], access: 's3',
+    counter: [[-6, -11], [4, -11]], qDir: [0, 1], access: 's3',
     color: 0x8fb57a,
   },
   xray: {
     floor: 0, pos: [14, -11], size: [13, 15],
-    counter: [[9, -14.5], [19, -14.5]], qDir: [0, 1], access: 's5', cubicle: true,
+    counter: [[9, -11], [19, -11]], qDir: [0, 1], access: 's5', cubicle: true,
     color: 0x9aa7b8, rooms: 3,
   },
   er: {
     // ER มีทางเข้ารถพยาบาลของตัวเองทางตะวันออก ผู้ป่วยไม่ผ่านโถงหน้า
     floor: 0, pos: [28, -10.5], size: [11, 16],
-    counter: [[24, -16], [24, -5]], qDir: [1, 0], access: 'er_door',
+    counter: [[28, -16], [28, -5]], qDir: [1, 0], access: 'er_door', cubicle: true,
     color: 0xd4756b, accent: true,
   },
   ipd: {
     floor: 1, pos: [-16, -6], size: [34, 22],
-    counter: [[-31, 0], [0, 0]], qDir: [0, 1], access: 'f1_w',
+    counter: [[-31, -1], [0, -1]], qDir: [0, 1], access: 'f1_w',
     color: 0x8aaed0, beds: 120,
   },
   or: {
     floor: 1, pos: [20, -8], size: [22, 20],
-    counter: [[11, -4], [29, -4]], qDir: [0, 1], access: 'f1_e', cubicle: true,
+    counter: [[11, -8], [29, -8]], qDir: [0, 1], access: 'f1_e', cubicle: true,
     color: 0x7fc4c0, rooms: 3, kind: 'ward',
   },
 };
@@ -285,7 +285,7 @@ export function servicePos(key, slot, servers) {
     return [
       -31 + col * 1.35,
       FLOOR_Y[r.floor],
-      -1 - row * 3.2,
+      -4 - row * 3.2,
     ];
   }
   const n = Math.max(servers, 1);
@@ -293,16 +293,46 @@ export function servicePos(key, slot, servers) {
   const x = x1 + (x2 - x1) * f;
   const z = z1 + (z2 - z1) * f;
   if (r.cubicle) {
-    // ห้องตรวจ/ห้องเอกซเรย์/ห้องผ่าตัด: คนไข้เข้าไปอยู่ในคูหาด้านใน
+    // ห้องตรวจ/เอกซเรย์/ผ่าตัด/ER: คนไข้เข้าไปอยู่ในคูหาด้านใน
     // ไม่ใช่ยืนหน้าเคาน์เตอร์เหมือนจุดบริการแบบเคาน์เตอร์
-    const depth = r.size[1] * 0.16;
+    // วัดความลึกตามแกนที่คิวยืดออกไป ไม่ใช่ size[1] เสมอ (ER ยืดตามแกน x)
+    const ext = Math.abs(r.qDir[0]) > 0.5 ? r.size[0] : r.size[1];
+    const depth = ext * 0.22;
     return [x - r.qDir[0] * depth, FLOOR_Y[r.floor], z - r.qDir[1] * depth];
   }
   // จุดบริการแบบเคาน์เตอร์: คนไข้ยืนฝั่งคิว เจ้าหน้าที่อยู่อีกฝั่ง
   return [x + r.qDir[0] * 1.1, FLOOR_Y[r.floor], z + r.qDir[1] * 1.1];
 }
 
-/** ตำแหน่งคนที่ต่อคิวลำดับที่ idx — ยืดออกจากเคาน์เตอร์ แล้วพับเป็นแถวเมื่อยาวเกิน */
+/**
+ * ขนาดของ "โถงรอ" — พื้นที่ระหว่างแนวจุดบริการกับขอบห้องด้านทางเดิน
+ * ใช้จำกัดคิวให้อยู่ในห้องเสมอ
+ */
+function waitingArea(r) {
+  const [[x1, z1], [x2, z2]] = r.counter;
+  const mx = (x1 + x2) / 2;
+  const mz = (z1 + z2) / 2;
+  const [cx, cz] = r.pos;
+  const [w, d] = r.size;
+  let avail;
+  if (Math.abs(r.qDir[0]) > 0.5) {
+    avail = r.qDir[0] > 0 ? cx + w / 2 - mx : mx - (cx - w / 2);
+  } else {
+    avail = r.qDir[1] > 0 ? cz + d / 2 - mz : mz - (cz - d / 2);
+  }
+  return {
+    width: Math.hypot(x2 - x1, z2 - z1) || 1,
+    depth: Math.max(avail - 0.8, 2.0),
+  };
+}
+
+/**
+ * ตำแหน่งคนที่ต่อคิวลำดับที่ idx
+ *
+ * คิวถูกบังคับให้อยู่ในโถงรอเสมอ พอคนเกินความจุของโถงจะยืนซ้อนแน่นขึ้น
+ * ไม่ใช่เดินทะลุผนังออกไป — คิว OPD เช้าวันจันทร์พีคถึง ~200 คน
+ * ซึ่งไม่มีโถงไหนใส่เป็นแถวเรียงได้จริง และของจริงก็ยืนเบียดกันแบบนี้
+ */
 export function queuePos(key, idx) {
   const r = ROOMS[key];
   if (!r) return [0, 0, 0];
@@ -310,14 +340,26 @@ export function queuePos(key, idx) {
   const mx = (x1 + x2) / 2;
   const mz = (z1 + z2) / 2;
   const len = Math.hypot(x2 - x1, z2 - z1) || 1;
-  // ทิศตามแนวเคาน์เตอร์ (สำหรับพับแถว)
   const tx = (x2 - x1) / len;
   const tz = (z2 - z1) / len;
-  const perRow = Math.max(3, Math.floor(len / 1.2));
-  const row = Math.floor(idx / perRow);
-  const col = idx % perRow;
-  const back = 2.6 + row * 1.3;              // ห่างจากเคาน์เตอร์
-  const side = (col - (perRow - 1) / 2) * 1.2; // เยื้องข้าง
+
+  const A = waitingArea(r);
+  const SP = 1.1;                 // ระยะห่างระหว่างคน
+  const FIRST = 1.7;              // แถวแรกห่างจากจุดบริการเท่าไร
+  const perRow = Math.max(2, Math.floor(A.width / SP));
+  const rows = Math.max(1, Math.floor((A.depth - FIRST) / SP) + 1);
+  const cap = perRow * rows;
+
+  const layer = Math.floor(idx / cap);   // ชั้นที่ซ้อนทับ เมื่อโถงเต็ม
+  const i = idx % cap;
+  const row = Math.floor(i / perRow);
+  const col = i % perRow;
+
+  const jitter = layer * 0.37;
+  const back = Math.min(FIRST + row * SP + jitter, A.depth);
+  const half = (A.width - SP) / 2;
+  const side = Math.max(-half, Math.min(half, (col - (perRow - 1) / 2) * SP + layer * 0.43));
+
   return [
     mx + r.qDir[0] * back + tx * side,
     FLOOR_Y[r.floor],
@@ -347,10 +389,9 @@ export function roomCamera(key) {
   if (!r) return [[0, 48, 56], [0, 0, 0]];
   const [cx, cz] = r.pos;
   const y = FLOOR_Y[r.floor];
-  // เข้าใกล้พอที่จะเห็น "ตัวคน" ไม่ใช่เห็นแค่ผังห้อง
-  // คนสูง 1.3 ม. ที่ระยะ 50 ม. สูงราว 15 px บนจอ 600 px ซึ่งแยกไม่ออกจากเก้าอี้
-  // ที่ระยะ 27 ม. จะได้ราว 28 px เห็นสีและท่าทางได้
-  const d = Math.max(r.size[0], r.size[1]) * 0.9 + 6;
+  // ระยะที่เห็นทั้งห้องพร้อมอุปกรณ์ และยังแยกตัวคนออกจากเฟอร์นิเจอร์ได้
+  // ตอนห้องยังว่างระยะ 27 ม. พอดี แต่พอมีโต๊ะ เตียง เครื่องมือเต็มห้องแล้วใกล้เกินไป
+  const d = Math.max(r.size[0], r.size[1]) * 1.1 + 11;
   // มุมกดต่ำลง (~28°) เพื่อมองเข้าไปในห้อง ไม่ใช่มองลงมาเห็นแต่พื้น
   return [
     [cx + d * 0.5, y + d * 0.52, cz + d * 0.85],

@@ -15,6 +15,7 @@ import { ROOMS, roomCamera, BUILDING } from './layout.js';
 import { Stage, applyTheme } from './stage.js';
 import { Building } from './building.js';
 import { Agents } from './agents.js';
+import { Staff } from './staff.js';
 import { Hud } from './hud.js';
 
 const canvas = document.getElementById('view');
@@ -37,6 +38,7 @@ applyTheme(); // ต้องเรียกก่อนสร้างฉาก
 const stage = new Stage(canvas);
 const building = new Building(stage);
 const agents = new Agents(stage);
+const staff = new Staff(stage);
 
 // ───────────────────────── มุมกล้องสำเร็จรูป ─────────────────────────
 const CAMS = {
@@ -305,6 +307,7 @@ function loop(now) {
   const snap = sim.snapshot();
   building.highlight(app.selected, snap.bottleneck);
   agents.sync(sim, dtReal, app.followId, app.floor, building.liftAmount());
+  staff.sync(sim, app.floor, building.liftAmount());
   stage.update(dtReal);
   stage.render();
   hud.update(snap, { hudEvery: stage.tier.hudEvery, dragging: app.dragging });
@@ -340,7 +343,7 @@ rebuild(sim.cfg, 7 * 60 + 30);
 // เปิดให้ตรวจสอบจาก console ได้ — มีประโยชน์ตอนแก้ปัญหาและตอนเอาไปสอน
 window.hospital = {
   get sim() { return sim; },
-  app, stage, building, agents, hud,
+  app, stage, building, agents, staff, hud,
   // เช่น: hospital.debug() ดูว่าตอนนี้วาดคนกี่ตัว และคนแรกอยู่ที่ไหน
   debug() {
     const p0 = sim.patients[0];
@@ -353,6 +356,8 @@ window.hospital = {
       lift: building.liftAmount(),
       first: p0 ? { id: p0.id, state: p0.state, at: p0.at, to: p0.to, pos: agents.posOf(p0.id) } : null,
       camDist: stage.cam.dist,
+      staffDrawn: staff.body.count,
+      props: building.propStats,
     };
   },
 };

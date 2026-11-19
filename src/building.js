@@ -8,6 +8,7 @@
 import * as THREE from '../vendor/three.module.js';
 import { BUILDING, ROOMS, NODES, EDGES, FLOOR_Y, servicePos } from './layout.js';
 import { STATION_DEFS } from './sim.js';
+import { furnish } from './props.js';
 import { PALETTE } from './stage.js';
 
 /** ป้ายชื่อแผนก — วาดด้วย canvas เพื่อให้ได้ฟอนต์ไทยของเครื่อง ไม่ต้องแนบไฟล์ฟอนต์ */
@@ -51,8 +52,13 @@ function makeLabel(text, sub = '', accent = false) {
 
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = 4;
-  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-  spr.scale.set(c.width / 46, c.height / 46, 1);
+  // sizeAttenuation: false = ป้ายมีขนาดคงที่บนจอ ไม่โตตามการซูม
+  // ถ้าปล่อยให้โตตามระยะ พอกล้องบินเข้าไปในห้อง ป้ายจะบังทั้งห้องและล้นออกนอกจอ
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthTest: false, sizeAttenuation: false,
+  }));
+  const H = accent ? 0.030 : 0.034;   // สัดส่วนของความสูงจอ
+  spr.scale.set((H * c.width) / c.height, H, 1);
   spr.renderOrder = 20;
   return spr;
 }
@@ -80,6 +86,7 @@ export class Building {
     this._slabs();
     this._corridors();
     this._rooms();
+    this._furniture();
     this._exterior();
     this._roof();
     this._outside();
@@ -282,6 +289,15 @@ export class Building {
 
       this.floorGroups[r.floor].add(g);
     }
+  }
+
+  // ───────── เฟอร์นิเจอร์และเครื่องมือในห้อง ─────────
+  _furniture() {
+    // จำนวนโต๊ะ/เตียง/คูหา อิงขนาดห้องตามแบบ ไม่ใช่จำนวนเจ้าหน้าที่ที่เข้าเวรวันนั้น
+    // (หมอลา 2 คน ห้องตรวจก็ยังมี 8 ห้องเท่าเดิม) ส่วนตัวคนอยู่ใน staff.js
+    const servers = {};
+    for (const [k, d] of Object.entries(STATION_DEFS)) servers[k] = d.servers;
+    this.propStats = furnish(this.floorGroups, servers, this.shadows);
   }
 
   // ───────── เปลือกอาคาร ─────────
