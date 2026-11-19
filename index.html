@@ -55,7 +55,8 @@ body{
 #clock{grid-area:tl;align-self:start}
 #depts{grid-area:ml;align-self:start;max-height:calc(100vh - 230px);overflow-y:auto;scrollbar-width:thin}
 #charts{grid-area:tr;align-self:start}
-#tune{grid-area:mr;align-self:start;max-height:calc(100vh - 250px);overflow-y:auto;scrollbar-width:thin}
+#rightcol{grid-area:mr;align-self:start;max-height:calc(100vh - 250px);overflow-y:auto;scrollbar-width:thin;
+  display:flex;flex-direction:column;gap:12px}
 #ctrl{grid-area:bl;align-self:end;grid-column:tl-start/span 1}
 #bottom{grid-area:bot;align-self:end;justify-self:center;width:min(640px,100%);display:flex;flex-direction:column;gap:8px}
 #card{grid-area:br;align-self:end}
@@ -107,6 +108,21 @@ input[type=range]::-moz-range-track{height:3px;border-radius:2px;background:var(
 input[type=range]::-moz-range-thumb{width:12px;height:12px;border:2px solid var(--panel-solid);border-radius:50%;background:var(--info)}
 .hint{font-size:10px;color:var(--ink-3);margin-top:5px;line-height:1.35}
 
+/* ───────── ตารางเทียบสถานการณ์ ───────── */
+.cmp{width:100%;border-collapse:collapse;font-size:11px}
+.cmp th{font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);
+  font-weight:600;text-align:right;padding:0 0 3px}
+.cmp th:first-child{text-align:left}
+.cmp td{padding:2.5px 0;border-top:1px solid var(--line);text-align:right;font-family:var(--mono);font-size:11px}
+.cmp td:first-child{text-align:left;font-family:var(--sans);color:var(--ink-2);font-size:11px}
+.cmp tr.sec td{border-top:1px solid var(--line-2);color:var(--ink-3);font-size:9.5px;
+  letter-spacing:.05em;text-transform:uppercase;padding-top:6px}
+.dlt{font-weight:600}
+.dlt.good{color:var(--ok)}
+.dlt.bad{color:var(--accent)}
+.dlt.same{color:var(--ink-3)}
+.cmpbtns{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+
 /* ───────── กราฟ ───────── */
 canvas.ch{width:100%;display:block;border-radius:6px}
 .chl{font-size:10px;color:var(--ink-3);display:flex;justify-content:space-between;margin-top:2px;font-family:var(--mono)}
@@ -156,7 +172,7 @@ canvas.ch{width:100%;display:block;border-radius:6px}
 
 /* ───────── จอเล็ก ───────── */
 @media (max-width:1100px){
-  #charts,#tune{display:none}
+  #charts,#rightcol{display:none}
   .ui{grid-template-columns:minmax(190px,214px) 1fr;grid-template-areas:"tl top" "ml ." "bl bot";}
 }
 @media (max-width:720px){
@@ -209,12 +225,33 @@ canvas.ch{width:100%;display:block;border-radius:6px}
     <div class="chl"><span>06:00</span><span id="chMax">0</span><span>18:00</span></div>
     <h3 style="margin-top:11px">การใช้กำลังคน</h3>
     <canvas class="ch" id="chU" height="112"></canvas>
+    <h3 style="margin-top:11px">การกระจายเวลารอ <span id="chPct"></span></h3>
+    <canvas class="ch" id="chH" height="74"></canvas>
+    <div class="chl"><span>0</span><span>นาที</span><span id="chHMax">120+</span></div>
+  </div>
+
+  <div id="rightcol">
+
+  <div class="p" id="compare">
+    <h3>เทียบผลทั้งวัน <span id="cmpBusy" style="font-weight:400"></span></h3>
+    <table class="cmp"><thead><tr>
+      <th>ตัวชี้วัด</th><th>ฐาน</th><th>ตอนนี้</th><th>ต่าง</th>
+    </tr></thead><tbody id="cmpBody"></tbody></table>
+    <div class="cmpbtns">
+      <button class="b" id="cmpSet">ตั้งค่าปัจจุบันเป็นฐาน</button>
+      <button class="b" id="csvSum">CSV สรุป</button>
+      <button class="b" id="csvTs">CSV รายช่วงเวลา</button>
+    </div>
+    <div class="hint">รันทั้งวันจบแล้วเทียบ ไม่ใช่เทียบคิว ณ วินาทีนี้ซึ่งแกว่งตลอด
+      ตัวสุ่มมี seed คงที่ ผลที่ต่างจึงมาจากกำลังคนที่ต่าง ไม่ใช่ดวง</div>
   </div>
 
   <div class="p" id="tune">
     <h3>ปรับสถานการณ์</h3>
     <div id="slist"></div>
     <div class="hint">เลื่อนแล้วเห็นผลทันที — ลองลดแพทย์ OPD เหลือ 6 คน แล้วดูว่าคอขวดย้ายไปไหน</div>
+  </div>
+
   </div>
 
   <div class="p" id="ctrl">

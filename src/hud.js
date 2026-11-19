@@ -5,11 +5,35 @@
  * ไม่มีการคำนวณสถิติซ้ำที่นี่ เพื่อไม่ให้ตัวเลขบนจอขัดกับการเคลื่อนไหวใน 3D
  */
 
-import { STATION_KEYS, STATION_DEFS, SCENARIOS } from './sim.js';
+import { STATION_KEYS, STATION_DEFS, SCENARIOS, runDay, WAIT_BUCKET_MIN, WAIT_BUCKETS } from './sim.js';
 import { PATIENT_LEGEND } from './agents.js';
 import { STAFF_LEGEND } from './staff.js';
 
 const $ = (id) => document.getElementById(id);
+
+/**
+ * ดาวน์โหลดเป็นไฟล์ CSV
+ * ใส่ BOM นำหน้าเพราะ Excel บน Windows จะอ่านภาษาไทยเป็นตัวยึกยือถ้าไม่มี
+ */
+function downloadCSV(name, rows) {
+  const NEEDS_QUOTE = new RegExp('[",\\r\\n]');
+  const esc = (v) => {
+    const t = String(v ?? '');
+    return NEEDS_QUOTE.test(t) ? '"' + t.split('"').join('""') + '"' : t;
+  };
+  const csv = rows.map((r) => r.map(esc).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+const r1 = (v) => (Math.round(v * 10) / 10).toFixed(1);
 
 function mins(v) {
   if (!isFinite(v) || v <= 0) return '—';
@@ -42,6 +66,7 @@ export class Hud {
     this._buildSliders();
     this._buildButtons();
     this._initCharts();
+    this._buildCompare();
   }
 
   // ───────── คำอธิบายสี ─────────
@@ -206,11 +231,14 @@ export class Hud {
       return ctx;
     };
     this.fit = fit;
+    this.chH = $('chH');
     this.qctx = fit(this.cq);
     this.uctx = fit(this.cu);
+    this.hctx = this.chH ? fit(this.chH) : null;
     window.addEventListener('resize', () => {
       this.qctx = fit(this.cq);
       this.uctx = fit(this.cu);
+      if (this.chH) this.hctx = fit(this.chH);
     });
   }
 
@@ -314,6 +342,191 @@ export class Hud {
     }
   }
 
+  // ───────── การกระจายเวลารอ ─────────
+  /**
+   * ค่าเฉลี่ยบังความจริงได้: OPD เฉลี่ย 16 นาที แต่จริง ๆ คือคนส่วนใหญ่แทบไม่รอ
+   * ส่วนคนที่มาเช้ารอเกินครึ่งชั่วโมง กราฟนี้ทำให้เห็นว่าเป็นแบบไหน
+   */
+  _drawHist() {
+    const ctx = this.hctx;
+    if (!ctx) return;
+    const W = this.chH.clientWidth;
+    const H = parseInt(this.chH.getAttribute('height'), 10);
+    if (!W || !H) return;
+    ctx.clearRect(0, 0, W, H);
+
+    const k = this.chartKey;
+    const hist = this.sim.waitHistogram(k);
+    let total = 0;
+    for (const c of hist) total += c;
+    const p50 = this.sim.waitPercentile(k, 0.5);
+    const p90 = this.sim.waitPercentile(k, 0.9);
+    const pct = $('chPct');
+    if (pct) {
+      pct.textContent = total
+        ? `กลาง ${Math.round(p50)} น. · 90% ไม่เกิน ${Math.round(p90)} น.`
+        : '';
+    }
+    if (!total) return;
+
+    let max = 1;
+    for (const c of hist) max = Math.max(max, c);
+    const bw = W / hist.length;
+    const span = WAIT_BUCKETS * WAIT_BUCKET_MIN;
+
+    for (let i = 0; i < hist.length; i++) {
+      if (!hist[i]) continue;
+      const h = (hist[i] / max) * (H - 8);
+      const mid = i * WAIT_BUCKET_MIN;
+      ctx.fillStyle = mid >= p90 ? this._css('--accent')
+        : mid >= p50 ? this._css('--warn')
+        : this._css('--info');
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(i * bw, H - h, Math.max(bw - 0.6, 1), h);
+    }
+    ctx.globalAlpha = 1;
+
+    for (const [v, lbl] of [[p50, 'p50'], [p90, 'p90']]) {
+      const x = (v / span) * W;
+      ctx.strokeStyle = this._css('--ink-3');
+      ctx.setLineDash([2, 2]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = this._css('--ink-3');
+      ctx.font = '9px ui-monospace,monospace';
+      ctx.fillText(lbl, Math.min(x + 2, W - 20), 9);
+    }
+  }
+
+  // ───────── เทียบผลทั้งวัน ─────────
+  _buildCompare() {
+    this.baseline = null;
+    this.current = null;
+    this._cmpTimer = null;
+    const setBtn = $('cmpSet');
+    if (setBtn) {
+      setBtn.addEventListener('click', () => {
+        this.baseline = this.current ?? runDay(this.sim.cfg, this.sim.seed);
+        this._renderCompare();
+      });
+    }
+    const a = $('csvSum');
+    const b = $('csvTs');
+    if (a) a.addEventListener('click', () => this._exportSummary());
+    if (b) b.addEventListener('click', () => this._exportTimeSeries());
+    this.scheduleCompare(true);
+  }
+
+  /** รันทั้งวันใหม่แบบหน่วงเวลา ไม่ให้คำนวณซ้ำทุกขีดที่ลากสไลเดอร์ */
+  scheduleCompare(setBaseline = false) {
+    clearTimeout(this._cmpTimer);
+    const busy = $('cmpBusy');
+    if (busy) busy.textContent = '…';
+    this._cmpTimer = setTimeout(() => {
+      const t0 = performance.now();
+      this.current = runDay(this.sim.cfg, this.sim.seed);
+      if (setBaseline || !this.baseline) this.baseline = this.current;
+      if (busy) busy.textContent = `${Math.round(performance.now() - t0)} ms`;
+      this._renderCompare();
+    }, 320);
+  }
+
+  _cmpRows() {
+    const k = this.chartKey;
+    const d = STATION_DEFS[k];
+    const n = (v) => String(Math.round(v));
+    const mins = (v) => `${r1(v)} น.`;
+    return [
+      { sec: 'ทั้งโรงพยาบาล' },
+      { label: 'กลับบ้านแล้ว', get: (x) => x.left, fmt: n, better: 'higher' },
+      { label: 'รับไว้นอน', get: (x) => x.admitted, fmt: n, better: 'higher' },
+      { label: 'อยู่ใน รพ. เฉลี่ย', get: (x) => x.avgLOS, fmt: mins, better: 'lower' },
+      { label: 'ค้างตอนปิดทำการ', get: (x) => x.stillIn, fmt: n, better: 'lower' },
+      { sec: d.label },
+      { label: 'จุดบริการ', get: (x) => x.per[k].servers, fmt: n, better: 'none' },
+      { label: 'รอเฉลี่ย', get: (x) => x.per[k].avgWait, fmt: mins, better: 'lower' },
+      { label: 'รอกลาง (p50)', get: (x) => x.per[k].p50, fmt: mins, better: 'lower' },
+      { label: '90% รอไม่เกิน', get: (x) => x.per[k].p90, fmt: mins, better: 'lower' },
+      { label: 'คิวสูงสุด', get: (x) => x.per[k].maxQueue, fmt: n, better: 'lower' },
+      { label: 'ใช้กำลังคน', get: (x) => x.per[k].util * 100, fmt: (v) => `${Math.round(v)}%`, better: 'none' },
+    ];
+  }
+
+  _renderCompare() {
+    const body = $('cmpBody');
+    if (!body || !this.current) return;
+    body.innerHTML = '';
+    for (const row of this._cmpRows()) {
+      const tr = document.createElement('tr');
+      if (row.sec) {
+        tr.className = 'sec';
+        tr.innerHTML = `<td colspan="4">${row.sec}</td>`;
+        body.appendChild(tr);
+        continue;
+      }
+      const base = this.baseline ? row.get(this.baseline) : null;
+      const cur = row.get(this.current);
+      let delta = '<span class="dlt same">—</span>';
+      if (base !== null && isFinite(base)) {
+        const diff = cur - base;
+        const eps = Math.abs(base) * 0.005 + 0.05;
+        if (row.better === 'none' || Math.abs(diff) <= eps) {
+          delta = `<span class="dlt same">${Math.abs(diff) <= eps ? '—' : (diff > 0 ? '+' : '') + r1(diff)}</span>`;
+        } else {
+          const good = row.better === 'lower' ? diff < 0 : diff > 0;
+          delta = `<span class="dlt ${good ? 'good' : 'bad'}">${diff > 0 ? '+' : ''}${r1(diff)}</span>`;
+        }
+      }
+      tr.innerHTML = `<td>${row.label}</td><td>${base === null ? '—' : row.fmt(base)}</td>`
+        + `<td>${row.fmt(cur)}</td><td>${delta}</td>`;
+      body.appendChild(tr);
+    }
+  }
+
+  // ───────── ดาวน์โหลด CSV ─────────
+  _exportSummary() {
+    const d = this.current ?? runDay(this.sim.cfg, this.sim.seed);
+    const scen = $('scenName') ? $('scenName').textContent : '';
+    const rows = [
+      ['แบบจำลองการไหลของผู้ป่วยในโรงพยาบาล — สรุปรายแผนก'],
+      ['สถานการณ์', scen],
+      ['ผู้ป่วยมาทั้งหมด', d.arrived],
+      ['กลับบ้านแล้ว', d.left],
+      ['รับไว้นอน', d.admitted],
+      ['เวลาอยู่ใน รพ. เฉลี่ย (นาที)', r1(d.avgLOS)],
+      [],
+      ['แผนก', 'จุดบริการ', 'ให้บริการ (คน)', 'ใช้กำลังคน (%)',
+        'รอเฉลี่ย (นาที)', 'รอกลาง p50', '90% ไม่เกิน', 'รอนานสุด', 'คิวสูงสุด'],
+    ];
+    for (const k of STATION_KEYS) {
+      const p = d.per[k];
+      rows.push([p.label, p.servers, p.served, Math.round(p.util * 100),
+        r1(p.avgWait), r1(p.p50), r1(p.p90), r1(p.maxWait), p.maxQueue]);
+    }
+    downloadCSV('hospital-summary.csv', rows);
+  }
+
+  _exportTimeSeries() {
+    const d = this.current ?? runDay(this.sim.cfg, this.sim.seed);
+    const head = ['เวลา', 'อยู่ใน รพ.'];
+    for (const k of STATION_KEYS) head.push(`คิว ${STATION_DEFS[k].label}`);
+    for (const k of STATION_KEYS) head.push(`ใช้กำลังคน ${STATION_DEFS[k].label} (%)`);
+    const rows = [head];
+    for (const r of d.history) {
+      const m = Math.floor(r.t) % 1440;
+      const clock = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+      const line = [clock, r.inHouse];
+      for (const k of STATION_KEYS) line.push(r.q[k]);
+      for (const k of STATION_KEYS) line.push(Math.round(r.u[k] * 100));
+      rows.push(line);
+    }
+    downloadCSV('hospital-timeseries.csv', rows);
+  }
+
   // ───────── อัปเดตทุกเฟรม ─────────
   update(snap, opts = {}) {
     this.frame++;
@@ -356,11 +569,15 @@ export class Hud {
 
     this._drawQueue();
     this._drawUtil(snap);
+    this._drawHist();
   }
 
   setSelected(k) {
     this.selected = k;
-    if (k) this.chartKey = k;
+    if (k && k !== this.chartKey) {
+      this.chartKey = k;
+      this._renderCompare();   // ตารางเทียบเปลี่ยนตามแผนกที่เลือก
+    }
     for (const [key, el] of Object.entries(this.deptEls)) {
       el.root.setAttribute('aria-pressed', String(key === k));
     }

@@ -100,6 +100,10 @@ export const ST = {
 // ความเร็วเดินในโรงพยาบาล (เมตร/นาที) — คนป่วยเดินช้ากว่าคนปกติ (~1.25 m/s = 75 m/min)
 const WALK_SPEED = 72;
 
+// ความละเอียดของ histogram เวลารอ
+export const WAIT_BUCKET_MIN = 2;      // นาทีต่อช่อง
+export const WAIT_BUCKETS = 61;        // ช่อง 0..59 = 0-120 นาที, ช่อง 60 = เกิน 120
+
 /**
  * เวลาเดินจาก A ไป B — คิดจากระยะทางจริงบนผังอาคาร ไม่ใช่ค่าคงที่
  * ทำให้นาฬิกาในโมเดลกับตำแหน่งที่วาดใน 3D ตรงกันเสมอ: คนเดิน 85 ม. ใช้เวลานานกว่าคนเดิน 12 ม. จริง
@@ -154,6 +158,10 @@ export class HospitalSim {
         waitCount: 0,
         maxQueue: 0,
         maxWait: 0,
+        // การกระจายเวลารอ ช่องละ 2 นาที 0..120 และช่องสุดท้ายคือ 120 นาทีขึ้นไป
+        // ค่าเฉลี่ยอย่างเดียวบังความจริงได้: เฉลี่ย 20 นาทีอาจแปลว่าทุกคนรอ 20 นาที
+        // หรือครึ่งหนึ่งไม่รอเลยและอีกครึ่งรอ 40 นาที ซึ่งคนละเรื่องกันสิ้นเชิง
+        waitHist: new Int32Array(WAIT_BUCKETS),
       };
     }
     this.history = [];  // snapshot ทุก 5 นาที สำหรับกราฟ
@@ -286,6 +294,7 @@ export class HospitalSim {
         s.waitSum += wait;
         s.waitCount++;
         if (wait > s.maxWait) s.maxWait = wait;
+        s.waitHist[Math.min(Math.floor(wait / WAIT_BUCKET_MIN), WAIT_BUCKETS - 1)]++;
         p.state = ST.SERVICE;
         p.queueIdx = -1;
         // ER: ยิ่งวิกฤตยิ่งใช้เวลารักษานาน
@@ -453,6 +462,28 @@ export class HospitalSim {
     return this.totals.losCount ? this.totals.losSum / this.totals.losCount : 0;
   }
 
+  /**
+   * เปอร์เซ็นไทล์ของเวลารอ เช่น pct('opd', 0.9) = 90% ของคนรอไม่เกินกี่นาที
+   * ค่ามัธยฐาน (p50) กับ p90 คือตัวที่ใช้ตัดสินใจจริง ไม่ใช่ค่าเฉลี่ย
+   */
+  waitPercentile(k, p) {
+    const h = this.stations[k].waitHist;
+    const total = this.stations[k].waitCount;
+    if (!total) return 0;
+    const want = total * p;
+    let cum = 0;
+    for (let i = 0; i < h.length; i++) {
+      cum += h[i];
+      if (cum >= want) return (i + 0.5) * WAIT_BUCKET_MIN;
+    }
+    return WAIT_BUCKETS * WAIT_BUCKET_MIN;
+  }
+
+  /** สำเนา histogram เพื่อเอาไปวาดกราฟ */
+  waitHistogram(k) {
+    return Array.from(this.stations[k].waitHist);
+  }
+
   /** จุดที่เป็นคอขวดที่สุดตอนนี้ — ใช้ชี้ callout ใน 3D */
   bottleneck() {
     // ต้องมีคิวจริงหรือคนรอจริงก่อน ถึงจะเรียกว่าคอขวด
@@ -492,6 +523,8 @@ export class HospitalSim {
         maxWait: s.maxWait,
         maxQueue: s.maxQueue,
         served: s.servedCount,
+        p50: this.waitPercentile(k, 0.5),
+        p90: this.waitPercentile(k, 0.9),
       };
     }
     return {
@@ -506,6 +539,46 @@ export class HospitalSim {
       bottleneck: this.bottleneck(),
     };
   }
+}
+
+/**
+ * รันทั้งวันจบในครั้งเดียวแล้วคืนผลสรุป — ใช้สำหรับเทียบสถานการณ์
+ *
+ * เทียบ "คิว ณ วินาทีนี้" ไม่มีประโยชน์เพราะมันแกว่งตลอดเวลา
+ * คำถามจริงคือ "ถ้าเพิ่มแพทย์ 2 คน ทั้งวันจะดีขึ้นแค่ไหน" ซึ่งต้องรันจบวันถึงจะตอบได้
+ * ตัวสุ่มมี seed คงที่ ผลจึงเทียบกันได้ตรง ๆ: ต่างกันเพราะกำลังคนต่าง ไม่ใช่เพราะดวง
+ */
+export function runDay(cfg, seed) {
+  const s = new HospitalSim({ seed, cfg: structuredClone(cfg || {}) });
+  let guard = 0;
+  while (s.step(0.25) && guard++ < 100000) { /* เดินให้จบวัน */ }
+
+  const per = {};
+  for (const k of STATION_KEYS) {
+    const st = s.stations[k];
+    per[k] = {
+      label: st.def.label,
+      short: st.def.short,
+      servers: st.servers,
+      served: st.servedCount,
+      util: s.util(k),
+      avgWait: s.avgWait(k),
+      p50: s.waitPercentile(k, 0.5),
+      p90: s.waitPercentile(k, 0.9),
+      maxWait: st.maxWait,
+      maxQueue: st.maxQueue,
+      hist: Array.from(st.waitHist),
+    };
+  }
+  return {
+    arrived: s.totals.arrived,
+    left: s.totals.left,
+    admitted: s.totals.admitted,
+    avgLOS: s.avgLOS(),
+    stillIn: s.patients.length,
+    history: s.history.map((r) => ({ t: r.t, q: { ...r.q }, u: { ...r.u }, inHouse: r.inHouse })),
+    per,
+  };
 }
 
 // ───────────────────────── สถานการณ์สำเร็จรูป ─────────────────────────

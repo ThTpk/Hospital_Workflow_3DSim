@@ -94,6 +94,8 @@ const handlers = {
       el.r.value = String(v);
       el.out.textContent = el.fmt(v);
     }
+    // ไม่ตั้งฐานใหม่ เพื่อให้เทียบ 'วันปกติ กับ แพทย์ลา 2 คน' ได้ตรง ๆ
+    hud.scheduleCompare();
     stage.touch();
   },
 
@@ -132,11 +134,13 @@ const handlers = {
   setServers(key, n) {
     // ปรับสด ไม่ต้องรีสตาร์ท — จะเห็นคิวตอบสนองทันที
     sim.setServers(key, n);
+    hud.scheduleCompare();   // คำนวณผลทั้งวันใหม่เพื่อเทียบกับฐาน
     stage.touch();
   },
 
   setCfg(key, v) {
     sim.cfg[key] = v;
+    hud.scheduleCompare();
     stage.touch();
   },
 
