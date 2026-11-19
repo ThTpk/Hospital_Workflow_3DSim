@@ -333,6 +333,40 @@ function waitingArea(r) {
  * ไม่ใช่เดินทะลุผนังออกไป — คิว OPD เช้าวันจันทร์พีคถึง ~200 คน
  * ซึ่งไม่มีโถงไหนใส่เป็นแถวเรียงได้จริง และของจริงก็ยืนเบียดกันแบบนี้
  */
+const Q_SPACING = 1.1;   // ระยะห่างระหว่างคนในคิว
+const Q_FIRST = 1.7;     // แถวแรกห่างจากจุดบริการเท่าไร
+const Q_STAND_ROWS = 1;  // กี่แถวแรกที่ยืนรอ ที่เหลือมีเก้าอี้ให้นั่ง
+
+/**
+ * กริดของโถงรอ — ทั้งตำแหน่งคนและตำแหน่งเก้าอี้อ่านจากที่นี่ที่เดียว
+ * ถ้าแยกกันคำนวณ จะได้คนนั่งลอยอยู่ข้างเก้าอี้
+ */
+export function queueGrid(key) {
+  const r = ROOMS[key];
+  if (!r) return null;
+  const A = waitingArea(r);
+  const perRow = Math.max(2, Math.floor(A.width / Q_SPACING));
+  const rows = Math.max(1, Math.floor((A.depth - Q_FIRST) / Q_SPACING) + 1);
+  return {
+    perRow,
+    rows,
+    cap: perRow * rows,
+    spacing: Q_SPACING,
+    first: Q_FIRST,
+    standRows: Q_STAND_ROWS,
+    width: A.width,
+    depth: A.depth,
+  };
+}
+
+/** คนลำดับนี้ได้นั่งไหม — แถวหน้ายืนรอเรียก ที่เหลือนั่งเก้าอี้ */
+export function queueSeated(key, idx) {
+  const g = queueGrid(key);
+  if (!g) return false;
+  if (idx >= g.cap) return false;          // คนล้นโถง ยืนเบียดกัน ไม่มีเก้าอี้
+  return Math.floor(idx / g.perRow) >= g.standRows;
+}
+
 export function queuePos(key, idx) {
   const r = ROOMS[key];
   if (!r) return [0, 0, 0];
@@ -343,28 +377,28 @@ export function queuePos(key, idx) {
   const tx = (x2 - x1) / len;
   const tz = (z2 - z1) / len;
 
-  const A = waitingArea(r);
-  const SP = 1.1;                 // ระยะห่างระหว่างคน
-  const FIRST = 1.7;              // แถวแรกห่างจากจุดบริการเท่าไร
-  const perRow = Math.max(2, Math.floor(A.width / SP));
-  const rows = Math.max(1, Math.floor((A.depth - FIRST) / SP) + 1);
-  const cap = perRow * rows;
-
-  const layer = Math.floor(idx / cap);   // ชั้นที่ซ้อนทับ เมื่อโถงเต็ม
-  const i = idx % cap;
-  const row = Math.floor(i / perRow);
-  const col = i % perRow;
+  const g = queueGrid(key);
+  const layer = Math.floor(idx / g.cap);   // ชั้นที่ซ้อนทับ เมื่อโถงเต็ม
+  const i = idx % g.cap;
+  const row = Math.floor(i / g.perRow);
+  const col = i % g.perRow;
 
   const jitter = layer * 0.37;
-  const back = Math.min(FIRST + row * SP + jitter, A.depth);
-  const half = (A.width - SP) / 2;
-  const side = Math.max(-half, Math.min(half, (col - (perRow - 1) / 2) * SP + layer * 0.43));
+  const back = Math.min(g.first + row * g.spacing + jitter, g.depth);
+  const half = (g.width - g.spacing) / 2;
+  const side = Math.max(-half, Math.min(half, (col - (g.perRow - 1) / 2) * g.spacing + layer * 0.43));
 
   return [
     mx + r.qDir[0] * back + tx * side,
     FLOOR_Y[r.floor],
     mz + r.qDir[1] * back + tz * side,
   ];
+}
+
+/** ทิศที่คนในคิวหันหน้าไป (หันเข้าหาจุดบริการ) */
+export function queueFacing(key) {
+  const r = ROOMS[key];
+  return r ? Math.atan2(-r.qDir[0], -r.qDir[1]) : 0;
 }
 
 /** ที่นั่งรอผลแล็บ/เอกซเรย์ — แยกจากคิว เพราะคนกลุ่มนี้ไม่ได้รออะไรที่เคาน์เตอร์ */

@@ -13,7 +13,7 @@ import { frameOf } from './props.js';
 const MAX = 90;
 
 // สีชุดตามวิชาชีพ
-const ROLE = {
+export const ROLE = {
   clerk:  0x7f9fc4, // เจ้าหน้าที่เวชระเบียน/การเงิน
   nurse:  0x5fa89f, // พยาบาล
   doctor: 0xf0f4f8, // แพทย์ (เสื้อกาวน์ขาว)
@@ -22,6 +22,15 @@ const ROLE = {
 };
 
 const SKIN = 0xc9a888;
+
+/** คำอธิบายสีชุดสำหรับแสดงในหน้าเว็บ */
+export const STAFF_LEGEND = [
+  { label: 'แพทย์', hex: ROLE.doctor },
+  { label: 'พยาบาล', hex: ROLE.nurse },
+  { label: 'เวชระเบียน / การเงิน', hex: ROLE.clerk },
+  { label: 'เภสัชกร', hex: ROLE.pharm },
+  { label: 'นักเทคนิค', hex: ROLE.tech },
+];
 
 const ROLE_OF = {
   reg: 'clerk', cashier: 'clerk',

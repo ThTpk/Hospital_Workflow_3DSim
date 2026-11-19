@@ -191,15 +191,23 @@ canvas.addEventListener('pointerup', (e) => {
   const r = canvas.getBoundingClientRect();
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, stage.camera);
+  // ลำดับความสำคัญ: คลิกโดนตัวคนไข้ -> ติดตามคนนั้น
+  //                   ไม่โดนคน แต่โดนพื้นห้อง -> เลือกแผนกนั้น
+  //                   ไม่โดนอะไรเลย -> ยกเลิกทั้งหมด
   const p = agents.pick(ray);
   if (p) {
     app.followId = p.id;
     app.selected = null;
     hud.setSelected(null);
-  } else {
-    app.followId = null;
-    hud.showPatient(null, sim);
+    return;
   }
+  const roomKey = building.pickRoom(ray);
+  if (roomKey) {
+    handlers.selectDept(app.selected === roomKey ? null : roomKey);
+    return;
+  }
+  app.followId = null;
+  hud.showPatient(null, sim);
 });
 
 // ───────────────────────── แป้นพิมพ์ ─────────────────────────
@@ -289,6 +297,7 @@ function loop(now) {
   // ── กล้องตามผู้ป่วยที่เลือก ──
   if (app.followId != null) {
     const p = sim.patients.find((q) => q.id === app.followId);
+    agents.syncRoute(p || null, building.liftAmount());
     if (p) {
       const pos = agents.posOf(app.followId);
       if (pos && !stage.fly) {
@@ -301,11 +310,14 @@ function loop(now) {
       app.followId = null;
       hud.showPatient(null, sim);
     }
+  } else {
+    agents.syncRoute(null, 0);
   }
 
   // ── วาด ──
   const snap = sim.snapshot();
   building.highlight(app.selected, snap.bottleneck);
+  building.updateBoards(snap);
   agents.sync(sim, dtReal, app.followId, app.floor, building.liftAmount());
   staff.sync(sim, app.floor, building.liftAmount());
   stage.update(dtReal);
@@ -362,10 +374,16 @@ window.hospital = {
   },
 };
 
+// ซ่อนหน้าโหลดทันทีที่ของพร้อม ไม่ผูกกับ requestAnimationFrame
+// ถ้าผูกไว้ แล้วมีคนเปิดหน้านี้ค้างไว้ในแท็บพื้นหลัง เบราว์เซอร์จะระงับ rAF
+// คนนั้นจะเห็นหน้าโหลดค้างตลอดไปทั้งที่แบบจำลองพร้อมแล้ว
+const load = document.getElementById('load');
+if (load) {
+  load.classList.add('off');
+  setTimeout(() => load.remove(), 500);
+}
+
 requestAnimationFrame((t) => {
   last = t;
   loop(t);
-  const load = document.getElementById('load');
-  load.classList.add('off');
-  setTimeout(() => load.remove(), 500);
 });

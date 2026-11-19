@@ -210,6 +210,31 @@ function vitalMonitor(B, x, y, z, rotY) {
   B.b(x + Math.sin(rotY) * 0.065, y + 1.4, z + Math.cos(rotY) * 0.065, 0.3, 0.22, 0.02, C.screenVit, rotY);
 }
 
+/** รถเข็นนั่ง */
+function wheelchair(B, x, y, z, rotY) {
+  B.b(x, y + 0.46, z, 0.52, 0.06, 0.5, 0x5d6b7a, rotY);                               // เบาะนั่ง
+  B.b(x - Math.sin(rotY) * 0.26, y + 0.52, z - Math.cos(rotY) * 0.26, 0.52, 0.5, 0.05, 0x5d6b7a, rotY); // พนักพิง
+  for (const sx of [-1, 1]) {
+    B.c(x + Math.cos(rotY) * sx * 0.3, y, z - Math.sin(rotY) * sx * 0.3, 0.3, 0.07, C.metal);  // ล้อใหญ่
+    B.c(x + Math.cos(rotY) * sx * 0.22 + Math.sin(rotY) * 0.34, y, z - Math.sin(rotY) * sx * 0.22 + Math.cos(rotY) * 0.34, 0.09, 0.06, C.dark);
+  }
+  B.b(x + Math.sin(rotY) * 0.3, y + 0.14, z + Math.cos(rotY) * 0.3, 0.46, 0.04, 0.2, C.metal, rotY); // ที่วางเท้า
+}
+
+/** เปลนอนเข็น */
+function gurney(B, x, y, z, rotY) {
+  B.b(x, y + 0.72, z, 0.74, 0.1, 1.95, C.bedFrame, rotY);
+  B.b(x, y + 0.82, z, 0.72, 0.1, 1.9, C.bedSheet, rotY);
+  B.b(x - Math.sin(rotY) * 0.72, y + 0.92, z - Math.cos(rotY) * 0.72, 0.46, 0.09, 0.28, C.white, rotY);
+  for (const sx of [-1, 1]) {
+    B.b(x + Math.cos(rotY) * sx * 0.4, y + 0.86, z - Math.sin(rotY) * sx * 0.4, 0.04, 0.26, 1.2, C.metal, rotY);
+  }
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    B.c(x + Math.cos(rotY) * sx * 0.3 + Math.sin(rotY) * sz * 0.8,
+        y, z - Math.sin(rotY) * sx * 0.3 + Math.cos(rotY) * sz * 0.8, 0.07, 0.72, C.metal);
+  }
+}
+
 /** ชั้นวางของ (ยา / แฟ้ม) */
 function shelving(B, x, y, z, w, rotY, color = C.shelf) {
   B.b(x, y, z, w, 2.05, 0.42, color, rotY);
@@ -256,7 +281,15 @@ function furnishCounter(B, r, servers, opts = {}) {
 }
 
 const FURNISH = {
-  reg: (B, r, n) => furnishCounter(B, r, n, { shelves: true }),
+  reg: (B, r, n) => {
+    furnishCounter(B, r, n, { shelves: true });
+    // รถเข็นจอดรอตรงทางเข้า สำหรับผู้สูงอายุและคนเดินไม่ไหว
+    const f = frameOf(r);
+    for (let i = 0; i < 4; i++) {
+      const [x, y, z] = f.at(-f.len / 2 + 0.7 + i * 0.78, f.back - 0.5);
+      wheelchair(B, x, y, z, f.face + Math.PI);
+    }
+  },
 
   cashier: (B, r, n) => {
     furnishCounter(B, r, n, { shelves: true });
@@ -405,6 +438,13 @@ const FURNISH = {
     const [kx, ky, kz] = f.at(span / 2 - 0.6, f.back - 1.1);
     B.b(kx, ky, kz, 0.6, 0.95, 0.5, C.cart, f.face);
     B.b(kx, ky + 0.95, kz, 0.5, 0.18, 0.4, C.dark, f.face);
+    // เปลนอนและรถเข็นจอดรออยู่ข้างทาง
+    for (let i = 0; i < 2; i++) {
+      const [gx, gy, gz] = f.at(-span / 2 + 0.8 + i * 1.5, f.back - 0.6);
+      gurney(B, gx, gy, gz, f.face + Math.PI / 2);
+    }
+    const [wx2, wy2, wz2] = f.at(-span / 2 + 4.2, f.back - 0.7);
+    wheelchair(B, wx2, wy2, wz2, f.face);
   },
 
   or: (B, r, n) => {

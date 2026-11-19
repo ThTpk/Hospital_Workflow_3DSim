@@ -6,6 +6,8 @@
  */
 
 import { STATION_KEYS, STATION_DEFS, SCENARIOS } from './sim.js';
+import { PATIENT_LEGEND } from './agents.js';
+import { STAFF_LEGEND } from './staff.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -35,10 +37,43 @@ export class Hud {
     this.selected = null;
     this.chartKey = 'opd';
     this.frame = 0;
+    this._buildLegend();
     this._buildDepts();
     this._buildSliders();
     this._buildButtons();
     this._initCharts();
+  }
+
+  // ───────── คำอธิบายสี ─────────
+  /**
+   * สร้างจากค่าสีจริงใน agents.js และ staff.js
+   * ไม่พิมพ์ชื่อสีซ้ำไว้ที่นี่ เพราะวันที่แก้สีแล้วลืมแก้คำอธิบาย
+   * หน้าเว็บจะโกหกคนดูโดยไม่มีใครรู้
+   */
+  _buildLegend() {
+    const host = $('legend');
+    if (!host) return;
+    const hex = (v) => `#${v.toString(16).padStart(6, '0')}`;
+
+    const row = (title, items) => {
+      const d = document.createElement('div');
+      d.className = 'lgrow';
+      d.innerHTML = `<span class="lgk">${title}</span>` + items.map((it) => {
+        const bg = it.to
+          ? `background:linear-gradient(135deg,${hex(it.hex)},${hex(it.to)})`
+          : `background:${hex(it.hex)}`;
+        const note = it.note ? ` <span class="lgn">(${it.note})</span>` : '';
+        return `<span class="lgi"><i class="lgs" style="${bg}"></i>${it.label}${note}</span>`;
+      }).join('');
+      return d;
+    };
+
+    host.innerHTML = '';
+    host.appendChild(row('ผู้ป่วย', PATIENT_LEGEND));
+    const staffRow = row('เจ้าหน้าที่', STAFF_LEGEND);
+    staffRow.insertAdjacentHTML('beforeend',
+      '<span class="lgi"><i class="lgs" style="background:var(--accent)"></i>ห้องเรืองแสง = คอขวด</span>');
+    host.appendChild(staffRow);
   }
 
   // ───────── รายการแผนก ─────────

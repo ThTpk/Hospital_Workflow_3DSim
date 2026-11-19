@@ -6,10 +6,33 @@
  */
 
 import * as THREE from '../vendor/three.module.js';
-import { BUILDING, ROOMS, NODES, EDGES, FLOOR_Y, servicePos } from './layout.js';
+import { BUILDING, ROOMS, NODES, EDGES, FLOOR_Y, servicePos, queuePos, queueGrid, queueSeated, queueFacing } from './layout.js';
 import { STATION_DEFS } from './sim.js';
 import { furnish } from './props.js';
-import { PALETTE } from './stage.js';
+import { PALETTE, isDark } from './stage.js';
+
+/** ลายกระเบื้องพื้น 1x1 เมตร — สร้างด้วย canvas ไม่ต้องแนบไฟล์รูป */
+function tileTexture(repeatX, repeatY) {
+  const dark = isDark();
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = dark ? '#2f3640' : '#f3f6f9';
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.strokeStyle = dark ? 'rgba(220,235,255,0.06)' : 'rgba(40,58,76,0.08)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(1, 0); ctx.lineTo(1, 128);
+  ctx.moveTo(0, 1); ctx.lineTo(128, 1);
+  ctx.stroke();
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeatX, repeatY);
+  tex.anisotropy = 4;
+  return tex;
+}
 
 /** ป้ายชื่อแผนก — วาดด้วย canvas เพื่อให้ได้ฟอนต์ไทยของเครื่อง ไม่ต้องแนบไฟล์ฟอนต์ */
 function makeLabel(text, sub = '', accent = false) {
@@ -63,6 +86,64 @@ function makeLabel(text, sub = '', accent = false) {
   return spr;
 }
 
+/** จอแสดงคิวหน้าแผนก — วาดด้วย canvas แล้วอัปเดตเฉพาะตอนตัวเลขเปลี่ยน */
+function makeBoard() {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 104;
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+  sprite.scale.set(2.6, 1.06, 1);
+  return { sprite, canvas: c, tex, last: '' };
+}
+
+function drawBoard(b, calling, waiting) {
+  const key = `${calling}|${waiting}`;
+  if (key === b.last) return;
+  b.last = key;
+  const ctx = b.canvas.getContext('2d');
+  const W = b.canvas.width;
+  const H = b.canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.fillStyle = 'rgba(18,24,32,0.93)';
+  const r = 14;
+  ctx.beginPath();
+  ctx.moveTo(r, 0);
+  ctx.arcTo(W, 0, W, H, r);
+  ctx.arcTo(W, H, 0, H, r);
+  ctx.arcTo(0, H, 0, 0, r);
+  ctx.arcTo(0, 0, W, 0, r);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(160,180,200,0.35)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(190,205,220,0.75)';
+  ctx.font = '500 20px "Noto Sans Thai","Leelawadee UI",Tahoma,sans-serif';
+  ctx.fillText('กำลังเรียก', 16, 26);
+
+  ctx.fillStyle = '#5fd0e8';
+  ctx.font = '700 52px ui-monospace,Consolas,monospace';
+  ctx.fillText(String(calling).padStart(3, '0'), 14, 70);
+
+  ctx.fillStyle = 'rgba(190,205,220,0.75)';
+  ctx.font = '500 21px "Noto Sans Thai","Leelawadee UI",Tahoma,sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('รอ', W - 16, 28);
+  ctx.fillStyle = waiting > 20 ? '#ff7a63' : '#dde6ef';
+  ctx.font = '700 40px ui-monospace,Consolas,monospace';
+  ctx.fillText(String(waiting), W - 16, 68);
+  ctx.textAlign = 'left';
+
+  b.tex.needsUpdate = true;
+}
+
+// สีเส้นนำทางบนพื้นทางเดิน [ระยะเยื้องจากกึ่งกลาง, สี]
+const GUIDES = [[-1.25, 0x5b8fc9], [0, 0x6fb07a], [1.25, 0xd3a24e]];
+
 export class Building {
   constructor(stage) {
     this.stage = stage;
@@ -74,6 +155,8 @@ export class Building {
     this.floorGroups = [];     // แยกตามชั้น เพื่อซ่อนทีละชั้น
     this.roofGroup = new THREE.Group();
     this.labels = {};
+    this.roomPicks = [];   // พื้นห้อง ใช้เป็นเป้าให้คลิกเลือกแผนกใน 3D
+    this.boards = {};      // จอแสดงคิวหน้าแผนก
     this.shadows = stage.tier.shadows;
 
     for (let f = 0; f < BUILDING.floors; f++) {
@@ -102,7 +185,10 @@ export class Building {
     for (let f = 0; f < BUILDING.floors; f++) {
       const slab = new THREE.Mesh(
         new THREE.BoxGeometry(w, 0.4, d),
-        new THREE.MeshStandardMaterial({ color: PALETTE.slab, roughness: 0.92, metalness: 0 }),
+        new THREE.MeshStandardMaterial({
+          color: PALETTE.slab, roughness: 0.92, metalness: 0,
+          map: tileTexture(w, d),   // กระเบื้องขนาด 1x1 เมตร
+        }),
       );
       slab.position.set(cx, FLOOR_Y[f] - 0.2, cz);
       slab.receiveShadow = this.shadows;
@@ -121,6 +207,8 @@ export class Building {
 
   // ───────── ทางเดิน: แถบสีอ่อนบนพื้น ให้เห็นว่าคนไข้เดินตามเส้นนี้ ─────────
   _corridors() {
+    // สีเส้นนำทาง: น้ำเงิน = โซนตรวจ, เขียว = โซนตรวจวินิจฉัย, เหลือง = โซนรับยา/การเงิน
+    const guideAcc = this.floorGroups.map(() => GUIDES.map(() => []));
     const mat = new THREE.MeshStandardMaterial({
       color: 0xe8edf4, roughness: 0.7, metalness: 0,
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
@@ -140,7 +228,55 @@ export class Building {
       strip.position.set((A[0] + B[0]) / 2, FLOOR_Y[A[2]] + 0.012, (A[1] + B[1]) / 2);
       strip.receiveShadow = false;
       this.floorGroups[A[2]].add(strip);
+
+      // เส้นนำทางสีบนพื้น — เก็บรูปแบบไว้ก่อน ค่อยรวมเป็น InstancedMesh ตอนจบ
+      // ถ้าสร้างเป็น Mesh ทีละเส้น จะได้ draw call เพิ่มขึ้นเกือบ 40 ตัวโดยไม่จำเป็น
+      {
+        const nx = -dz / len;
+        const nz = dx / len;
+        const yaw = Math.atan2(-dz, dx);
+        for (let gi = 0; gi < GUIDES.length; gi++) {
+          const offset = GUIDES[gi][0];
+          guideAcc[A[2]][gi].push({
+            x: (A[0] + B[0]) / 2 + nx * offset,
+            y: FLOOR_Y[A[2]] + 0.02,
+            z: (A[1] + B[1]) / 2 + nz * offset,
+            len,
+            yaw,
+          });
+        }
+      }
     }
+    // รวมเส้นนำทางทั้งหมดเป็น InstancedMesh อย่างละสี
+    const lineGeo = new THREE.PlaneGeometry(1, 0.17);
+    lineGeo.rotateX(-Math.PI / 2);
+    for (let f = 0; f < guideAcc.length; f++) {
+      for (let gi = 0; gi < GUIDES.length; gi++) {
+        const list = guideAcc[f][gi];
+        if (!list.length) continue;
+        const im = new THREE.InstancedMesh(
+          lineGeo,
+          new THREE.MeshBasicMaterial({ color: GUIDES[gi][1], transparent: true, opacity: 0.5 }),
+          list.length,
+        );
+        const m4 = new THREE.Matrix4();
+        const pos = new THREE.Vector3();
+        const quat = new THREE.Quaternion();
+        const scl = new THREE.Vector3();
+        const eul = new THREE.Euler();
+        for (let i = 0; i < list.length; i++) {
+          const it = list[i];
+          pos.set(it.x, it.y, it.z);
+          eul.set(0, it.yaw, 0);
+          quat.setFromEuler(eul);
+          scl.set(it.len, 1, 1);
+          im.setMatrixAt(i, m4.compose(pos, quat, scl));
+        }
+        im.instanceMatrix.needsUpdate = true;
+        this.floorGroups[f].add(im);
+      }
+    }
+
     // บันได เชื่อมสองชั้น
     const st = new THREE.Group();
     this.stairGroup = st;
@@ -174,6 +310,8 @@ export class Building {
       const floorPatch = new THREE.Mesh(new THREE.PlaneGeometry(w, d), fmat);
       floorPatch.rotation.x = -Math.PI / 2;
       floorPatch.position.set(cx, y + 0.02, cz);
+      floorPatch.userData.roomKey = key;
+      this.roomPicks.push(floorPatch);
       g.add(floorPatch);
 
       // ผนังห้อง 4 ด้าน สูงไม่ถึงเพดาน ให้มองข้ามเข้าไปเห็นข้างในได้
@@ -186,18 +324,45 @@ export class Building {
       });
       this.wallMats.push(wallMat);
       const t = BUILDING.wallT;
-      const sides = [
-        [cx, cz - d / 2, w, t],
-        [cx, cz + d / 2, w, t],
-        [cx - w / 2, cz, t, d],
-        [cx + w / 2, cz, t, d],
-      ];
-      for (const [sx, sz, sw, sd] of sides) {
-        const m = new THREE.Mesh(new THREE.BoxGeometry(sw, h, sd), wallMat);
-        m.position.set(sx, y + h / 2, sz);
+      // ผนังด้านที่หันเข้าทางเดินต้องมีประตู ไม่ใช่กำแพงทึบรอบด้าน
+      // qDir ชี้ไปทางทางเดินอยู่แล้ว จึงใช้บอกได้ว่าด้านไหนคือด้านหน้าห้อง
+      const frontAxis = Math.abs(r.qDir[0]) > 0.5 ? 'x' : 'z';
+      const frontSign = frontAxis === 'x' ? Math.sign(r.qDir[0]) : Math.sign(r.qDir[1]);
+      const DOOR_W = 2.4;
+      const DOOR_H = 2.1;
+
+      const addWall = (px, py, pz, sw, sh, sd) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(sw, sh, sd), wallMat);
+        m.position.set(px, py, pz);
         m.castShadow = this.shadows;
         m.receiveShadow = this.shadows;
         g.add(m);
+      };
+
+      const sides = [
+        { x: cx, z: cz - d / 2, sw: w, sd: t, axis: 'z', sign: -1 },
+        { x: cx, z: cz + d / 2, sw: w, sd: t, axis: 'z', sign: 1 },
+        { x: cx - w / 2, z: cz, sw: t, sd: d, axis: 'x', sign: -1 },
+        { x: cx + w / 2, z: cz, sw: t, sd: d, axis: 'x', sign: 1 },
+      ];
+      for (const side of sides) {
+        if (!(side.axis === frontAxis && side.sign === frontSign)) {
+          addWall(side.x, y + h / 2, side.z, side.sw, h, side.sd);
+          continue;
+        }
+        // ด้านหน้า: ผนังสองท่อนขนาบช่องประตู แล้วมีคานเหนือประตู
+        const span = side.axis === 'z' ? side.sw : side.sd;
+        const seg = Math.max((span - DOOR_W) / 2, 0.2);
+        const off = DOOR_W / 2 + seg / 2;
+        if (side.axis === 'z') {
+          addWall(side.x - off, y + h / 2, side.z, seg, h, side.sd);
+          addWall(side.x + off, y + h / 2, side.z, seg, h, side.sd);
+          addWall(side.x, y + DOOR_H + (h - DOOR_H) / 2, side.z, DOOR_W, h - DOOR_H, side.sd);
+        } else {
+          addWall(side.x, y + h / 2, side.z - off, side.sw, h, seg);
+          addWall(side.x, y + h / 2, side.z + off, side.sw, h, seg);
+          addWall(side.x, y + DOOR_H + (h - DOOR_H) / 2, side.z, side.sw, h - DOOR_H, DOOR_W);
+        }
       }
 
       // เคาน์เตอร์/จุดบริการ
@@ -220,16 +385,29 @@ export class Building {
         const dirX = Math.abs(x2 - x1) > Math.abs(z2 - z1);
         for (let i = 1; i < n; i++) {
           const f = i / n;
+          const dw = dirX ? t : d * 0.62;
+          const dd = dirX ? d * 0.62 : t;
+          const px = dirX ? x1 + (x2 - x1) * f : cx;
+          const pz = dirX ? cz - r.qDir[1] * d * 0.19 : z1 + (z2 - z1) * f;
+          // ครึ่งล่างทึบ
           const div = new THREE.Mesh(
-            new THREE.BoxGeometry(dirX ? t : d * 0.62, 2.4, dirX ? d * 0.62 : t),
+            new THREE.BoxGeometry(dw, 1.55, dd),
             new THREE.MeshStandardMaterial({ color: 0xe6ebf1, roughness: 0.9 }),
           );
           this.wallMats.push(div.material);
-          const px = dirX ? x1 + (x2 - x1) * f : cx;
-          const pz = dirX ? cz - r.qDir[1] * d * 0.19 : z1 + (z2 - z1) * f;
-          div.position.set(px, y + 1.2, pz);
+          div.position.set(px, y + 0.775, pz);
           div.castShadow = this.shadows;
           g.add(div);
+          // ครึ่งบนเป็นกระจกฝ้า ทำให้อ่านเป็นห้องตรวจจริง ไม่ใช่แผงกั้นทึบ
+          const glass = new THREE.Mesh(
+            new THREE.BoxGeometry(dw * 0.94, 0.8, dd * 0.94),
+            new THREE.MeshStandardMaterial({
+              color: 0xbcd8e4, roughness: 0.22, metalness: 0.08,
+              transparent: true, opacity: 0.34, depthWrite: false,
+            }),
+          );
+          glass.position.set(px, y + 1.95, pz);
+          g.add(glass);
         }
       }
 
@@ -250,35 +428,49 @@ export class Building {
         g.add(beds);
       }
 
-      // เก้าอี้นั่งรอ — วางตามแนวคิว
+      // เก้าอี้นั่งรอ — วางที่ "ตำแหน่งคิว" ตรง ๆ โดยใช้สูตรเดียวกับที่วางคน
+      // ถ้าคำนวณแยกกัน จะได้ผู้ป่วยนั่งลอยอยู่ข้างเก้าอี้
       if (!r.beds && r.kind !== 'ward' && key !== 'or') {
-        const chairGeo = new THREE.BoxGeometry(0.52, 0.46, 0.52);
-        const chairMat = new THREE.MeshStandardMaterial({ color: 0xcdd6e0, roughness: 0.8 });
-        const rows = 3;
-        const perRow = Math.max(4, Math.floor(clen / 0.95));
-        const chairs = new THREE.InstancedMesh(chairGeo, chairMat, rows * perRow);
-        const m4 = new THREE.Matrix4();
-        const tx = clen > 0 ? (x2 - x1) / clen : 1;
-        const tz = clen > 0 ? (z2 - z1) / clen : 0;
-        const mx = (x1 + x2) / 2;
-        const mz = (z1 + z2) / 2;
-        let n = 0;
-        for (let row = 0; row < rows; row++) {
-          for (let c = 0; c < perRow; c++) {
-            const back = 4.4 + row * 1.5;
-            const side = (c - (perRow - 1) / 2) * 0.95;
-            m4.makeTranslation(
-              mx + r.qDir[0] * back + tx * side,
-              y + 0.24,
-              mz + r.qDir[1] * back + tz * side,
-            );
-            chairs.setMatrixAt(n++, m4);
+        const grid = queueGrid(key);
+        const seats = [];
+        for (let i = 0; i < grid.cap; i++) {
+          if (queueSeated(key, i)) seats.push(queuePos(key, i));
+        }
+        if (seats.length) {
+          const face = queueFacing(key);
+          const seatMat = new THREE.MeshStandardMaterial({ color: 0xc4ced9, roughness: 0.82 });
+          const backMat = new THREE.MeshStandardMaterial({ color: 0xaab6c3, roughness: 0.82 });
+          const seatMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.08, 0.48), seatMat, seats.length);
+          const backMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.42, 0.07), backMat, seats.length);
+          const legMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.46, 0.42, 0.06), seatMat, seats.length);
+          const m4 = new THREE.Matrix4();
+          const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, face, 0));
+          const one = new THREE.Vector3(1, 1, 1);
+          const v = new THREE.Vector3();
+          for (let i = 0; i < seats.length; i++) {
+            const [sx, , sz] = seats[i];
+            v.set(sx, y + 0.44, sz);
+            seatMesh.setMatrixAt(i, m4.compose(v, q, one));
+            // พนักพิงอยู่ด้านหลังคนนั่ง (ตรงข้ามทิศที่หันหน้าไป)
+            v.set(sx - Math.sin(face) * 0.22, y + 0.69, sz - Math.cos(face) * 0.22);
+            backMesh.setMatrixAt(i, m4.compose(v, q, one));
+            v.set(sx, y + 0.21, sz);
+            legMesh.setMatrixAt(i, m4.compose(v, q, one));
+          }
+          for (const m of [seatMesh, backMesh, legMesh]) {
+            m.instanceMatrix.needsUpdate = true;
+            m.castShadow = false;
+            g.add(m);
           }
         }
-        chairs.count = n;
-        chairs.instanceMatrix.needsUpdate = true;
-        chairs.castShadow = false;
-        g.add(chairs);
+      }
+
+      // จอแสดงคิวเหนือจุดบริการ — ใช้หน่วยจริงในโลก จะได้รู้สึกเป็นของในห้อง
+      if (clen > 0.5 && key !== 'ipd' && key !== 'or') {
+        const board = makeBoard();
+        board.sprite.position.set((x1 + x2) / 2, y + 3.0, (z1 + z2) / 2);
+        this.boards[key] = board;
+        g.add(board.sprite);
       }
 
       // ป้ายชื่อแผนก ลอยเหนือห้อง
@@ -405,8 +597,91 @@ export class Building {
     erLabel.position.set(40, 4.4, -10);
     g.add(erLabel);
 
+    // ───── ลานจอดรถหน้าอาคาร ─────
+    const lot = new THREE.Mesh(
+      new THREE.PlaneGeometry(46, 22),
+      new THREE.MeshStandardMaterial({ color: isDark() ? 0x2a3038 : 0xcfd3d8, roughness: 0.97 }),
+    );
+    lot.rotation.x = -Math.PI / 2;
+    lot.position.set(-6, 0.008, 34);
+    g.add(lot);
+    // เส้นช่องจอด
+    const bayGeo = new THREE.PlaneGeometry(0.12, 5);
+    bayGeo.rotateX(-Math.PI / 2);
+    const bayMat = new THREE.MeshBasicMaterial({ color: 0xf0f0f0, transparent: true, opacity: 0.45 });
+    const bays = new THREE.InstancedMesh(bayGeo, bayMat, 36);
+    const bm = new THREE.Matrix4();
+    let bn = 0;
+    for (let row = 0; row < 2; row++) {
+      for (let i = 0; i <= 17; i++) {
+        bm.makeTranslation(-28 + i * 2.6, 0.015, 29 + row * 10);
+        bays.setMatrixAt(bn++, bm);
+      }
+    }
+    bays.count = bn;
+    bays.instanceMatrix.needsUpdate = true;
+    g.add(bays);
+
+    // ───── ต้นไม้รอบอาคาร ─────
+    const trunkGeo = new THREE.CylinderGeometry(0.17, 0.23, 2.4, 7);
+    trunkGeo.translate(0, 1.2, 0);
+    const crownGeo = new THREE.SphereGeometry(1.5, 8, 6);
+    crownGeo.translate(0, 3.3, 0);
+    const spots = [];
+    for (let i = 0; i < 9; i++) spots.push([-34 + i * 7, 22]);
+    for (let i = 0; i < 5; i++) spots.push([-40, -16 + i * 9]);
+    for (let i = 0; i < 4; i++) spots.push([-30 + i * 9, 46]);
+    const trunks = new THREE.InstancedMesh(
+      trunkGeo, new THREE.MeshStandardMaterial({ color: 0x7a6552, roughness: 0.95 }), spots.length);
+    const crowns = new THREE.InstancedMesh(
+      crownGeo, new THREE.MeshStandardMaterial({ color: isDark() ? 0x3f6b46 : 0x6f9e62, roughness: 0.92 }), spots.length);
+    const tm = new THREE.Matrix4();
+    const tv = new THREE.Vector3();
+    const tq = new THREE.Quaternion();
+    const ts = new THREE.Vector3();
+    for (let i = 0; i < spots.length; i++) {
+      const sc = 0.78 + ((i * 37) % 11) / 18;   // ขนาดต่างกันเล็กน้อย ไม่ให้ดูเป็นของปั๊ม
+      tv.set(spots[i][0], 0, spots[i][1]);
+      ts.set(sc, sc, sc);
+      tm.compose(tv, tq, ts);
+      trunks.setMatrixAt(i, tm);
+      crowns.setMatrixAt(i, tm);
+    }
+    trunks.instanceMatrix.needsUpdate = true;
+    crowns.instanceMatrix.needsUpdate = true;
+    crowns.castShadow = this.shadows;
+    g.add(trunks);
+    g.add(crowns);
+
     this.outside = g;
     this.root.add(g);
+  }
+
+  /**
+   * หาแผนกจากจุดที่คลิกในฉาก 3D
+   * ต้องไล่เช็ก parent ขึ้นไปด้วย เพราะตอนซ่อนชั้น three ซ่อนที่ตัว group
+   * ส่วนพื้นห้องแต่ละชิ้นยังมี visible = true อยู่ ถ้าไม่เช็กจะคลิกทะลุไปโดนห้องชั้นที่ถูกซ่อน
+   */
+  pickRoom(raycaster) {
+    const hits = raycaster.intersectObjects(this.roomPicks, false);
+    for (const hit of hits) {
+      let o = hit.object;
+      let shown = true;
+      while (o) {
+        if (!o.visible) { shown = false; break; }
+        o = o.parent;
+      }
+      if (shown) return hit.object.userData.roomKey;
+    }
+    return null;
+  }
+
+  /** อัปเดตจอแสดงคิวทุกแผนกจาก snapshot เดียวกับที่ panel ใช้ */
+  updateBoards(snap) {
+    for (const [key, b] of Object.entries(this.boards)) {
+      const p = snap.per[key];
+      if (p) drawBoard(b, p.served, p.queue);
+    }
   }
 
   // ───────── โหมดการมอง ─────────

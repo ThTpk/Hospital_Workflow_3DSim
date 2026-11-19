@@ -57,7 +57,7 @@ body{
 #charts{grid-area:tr;align-self:start}
 #tune{grid-area:mr;align-self:start;max-height:calc(100vh - 250px);overflow-y:auto;scrollbar-width:thin}
 #ctrl{grid-area:bl;align-self:end;grid-column:tl-start/span 1}
-#timebar{grid-area:bot;align-self:end;justify-self:center;width:min(560px,100%)}
+#bottom{grid-area:bot;align-self:end;justify-self:center;width:min(640px,100%);display:flex;flex-direction:column;gap:8px}
 #card{grid-area:br;align-self:end}
 #title{grid-area:top;justify-self:center;align-self:start;text-align:center;pointer-events:none}
 
@@ -111,6 +111,15 @@ input[type=range]::-moz-range-thumb{width:12px;height:12px;border:2px solid var(
 canvas.ch{width:100%;display:block;border-radius:6px}
 .chl{font-size:10px;color:var(--ink-3);display:flex;justify-content:space-between;margin-top:2px;font-family:var(--mono)}
 
+/* ───────── คำอธิบายสี ───────── */
+#legend{padding:8px 11px}
+.lgrow{display:flex;flex-wrap:wrap;align-items:center;gap:3px 11px;font-size:10.5px;color:var(--ink-2);line-height:1.5}
+.lgrow + .lgrow{margin-top:5px;padding-top:5px;border-top:1px solid var(--line)}
+.lgk{color:var(--ink-3);font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:9px;flex-shrink:0}
+.lgi{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.lgs{width:9px;height:9px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 1px rgba(128,128,128,.3)}
+.lgn{color:var(--ink-3);font-size:9.5px}
+
 /* ───────── แถบเวลา ───────── */
 #timebar{display:flex;align-items:center;gap:10px}
 #timebar input[type=range]{flex:1}
@@ -154,7 +163,7 @@ canvas.ch{width:100%;display:block;border-radius:6px}
   .ui{display:block;padding:10px;overflow-y:auto;overflow-x:hidden;
     -webkit-overflow-scrolling:touch;background:linear-gradient(to bottom,transparent 48vh,var(--bg) 62vh)}
   .ui > *{margin-bottom:9px;width:100%}
-  #clock,#depts,#ctrl,#timebar,#card{position:static;max-height:none;width:100%}
+  #clock,#depts,#ctrl,#bottom,#card{position:static;max-height:none;width:100%}
   #depts{margin-top:40vh}
   #title{position:static;text-align:left;margin-bottom:9px}
   #tour{bottom:12px}
@@ -227,12 +236,18 @@ canvas.ch{width:100%;display:block;border-radius:6px}
     </div>
   </div>
 
+  <div id="bottom">
+
+  <div class="p" id="legend"></div>
+
   <div class="p" id="timebar">
     <button class="b" id="play" aria-pressed="true" style="min-width:58px">หยุด</button>
     <div class="btns" id="bSpeed"></div>
     <span class="tspan">06:00</span>
     <input type="range" id="scrub" min="360" max="1080" step="1" value="360" aria-label="เวลา">
     <span class="tspan">18:00</span>
+  </div>
+
   </div>
 
   <div class="p" id="card">
